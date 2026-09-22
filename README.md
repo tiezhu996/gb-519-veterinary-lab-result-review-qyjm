@@ -30,10 +30,11 @@ docker compose down -v --remove-orphans
 | 动物样本来源 | `AnimalCase` | `/api/cases` | registered, sampling, testing, closed |
 | 检验样本 | `Specimen` | `/api/specimens` | received, testing, hold, released, disposed |
 | 检测运行 | `AssayRun` | `/api/assays` | planned, running, validated, invalid |
-| 结果签发 | `ResultSignoff` | `/api/signoff` | draft, peer_review, signed, rejected |
+| 结果签发 | `ResultSignoff` | `/api/signoff` | draft, peer_review, second_review, signed, rejected |
 
 - 独立登录页和 viewer/operator/reviewer/admin 四级 RBAC；写操作至少需要 operator，审计接口至少需要 reviewer。
-- 结果签发只能按 `draft -> peer_review -> signed/rejected` 推进；签发与驳回必须由不同于制单人的 reviewer/admin 完成。
+- 结果签发按关联样本风险分级：普通风险（low/medium）保持 `draft -> peer_review -> signed/rejected` 异人单次批准；高/极高风险（high/critical）样本在 `peer_review` 由首名复核员确认后进入 `second_review`，必须由第二名不同复核员批准才能 `signed`。
+- 签发与驳回必须由不同于制单人的 reviewer/admin 完成；高风险二级签发还要求第二名复核员不同于首名确认人。关联样本缺失、同人重复确认、非复核角色或乐观版本过期一律拒绝，失败不推进状态，也不覆盖首条确认（首名确认人、结论、时间只写一次）。
 - 每次签发创建、草稿编辑和状态决策都会追加不可覆盖的版本，保留证据、操作者、原因和 request ID。
 - 所有状态变化使用乐观锁并写入不可覆盖的审计日志；已进入复核的签发业务字段不可再编辑。
 - 请求 ID、结构化日志、全局错误映射和 Redis 分布式限流。
@@ -118,16 +119,19 @@ KEEP_RUNNING=1 ./scripts/validate.sh
 | 枚举 | 值 | 前后端出现位置 |
 |---|---|---|
 | `SpecimenState` | `received, testing, hold, released, disposed` | `backend/internal/constants/status.go`、`frontend/src/types/status.ts` |
-| `SignoffState` | `draft, peer_review, signed, rejected` | `backend/internal/constants/status.go`、`frontend/src/types/status.ts` |
+| `SignoffState` | `draft, peer_review, second_review, signed, rejected` | `backend/internal/constants/status.go`、`frontend/src/types/status.ts` |
 
 每个实体自己的完整迁移图同样位于 `backend/internal/constants/status.go`；页面使用的状态列表位于 `frontend/src/types/status.ts`。修改状态时必须同步两处并更新对应服务测试。
 
 ## 结果签发控制
 
-1. operator 创建签发草稿，系统记录 `preparedBy` 并生成 v1。
+1. operator 创建签发草稿，系统记录 `preparedBy` 并生成 v1；签发记录通过 `relatedCode` 关联检验样本，复核决定按该样本的风险分级。
 2. 只有原制单人可以编辑或提交草稿；每次编辑和提交均追加版本。
 3. operator 不能作出最终签发决定；reviewer/admin 可以签发或驳回，但操作者必须不同于 `preparedBy`。
-4. `signed` 和 `rejected` 为终态，全部修订可从签发查询接口读取，审计历史可由 reviewer/admin 查询。
+4. 普通风险（low/medium）样本：一名不同于制单人的复核员在 `peer_review` 批准即可 `signed`。
+5. 高/极高风险（high/critical）样本：首名复核员在 `peer_review` 确认后进入 `second_review`，系统一次性写入 `firstReviewBy/firstReviewReason/firstReviewAt` 与样本风险快照；第二名不同复核员批准才 `signed`，同一人重复确认被拒。
+6. 关联样本缺失、非复核角色、同人重复确认或乐观版本过期都会被拒绝；失败不推进状态，也不会覆盖首条确认。
+7. `signed` 和 `rejected` 为终态，全部修订可从签发查询接口读取，审计历史可由 reviewer/admin 查询。记录页回显关联样本风险、首名确认、待办与原因，刷新后可回读。
 
 ## 环境变量
 

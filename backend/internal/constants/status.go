@@ -18,13 +18,14 @@ var AllSpecimenState = []string{"received", "testing", "hold", "released", "disp
 type SignoffState string
 
 const (
-	SignoffStateDraft      SignoffState = "draft"
-	SignoffStatePeerReview SignoffState = "peer_review"
-	SignoffStateSigned     SignoffState = "signed"
-	SignoffStateRejected   SignoffState = "rejected"
+	SignoffStateDraft        SignoffState = "draft"
+	SignoffStatePeerReview   SignoffState = "peer_review"
+	SignoffStateSecondReview SignoffState = "second_review"
+	SignoffStateSigned       SignoffState = "signed"
+	SignoffStateRejected     SignoffState = "rejected"
 )
 
-var AllSignoffState = []string{"draft", "peer_review", "signed", "rejected"}
+var AllSignoffState = []string{"draft", "peer_review", "second_review", "signed", "rejected"}
 
 var AnimalCaseTransitions = map[string]map[string]bool{
 	"registered": {"sampling": true, "testing": true},
@@ -49,10 +50,11 @@ var AssayRunTransitions = map[string]map[string]bool{
 }
 
 var ResultSignoffTransitions = map[string]map[string]bool{
-	"draft":       {"peer_review": true},
-	"peer_review": {"signed": true, "rejected": true},
-	"signed":      {},
-	"rejected":    {},
+	"draft":         {"peer_review": true},
+	"peer_review":   {"signed": true, "rejected": true, "second_review": true},
+	"second_review": {"signed": true, "rejected": true},
+	"signed":        {},
+	"rejected":      {},
 }
 
 func CanTransition(graph map[string]map[string]bool, from, to string) bool {

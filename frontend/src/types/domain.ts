@@ -18,6 +18,12 @@ export interface DomainRecord {
   preparedBy?: string;
   reviewedBy?: string;
   reviewReason?: string;
+  relatedRiskLevel?: 'low' | 'medium' | 'high' | 'critical' | '';
+  specimenRiskLevel?: 'low' | 'medium' | 'high' | 'critical' | '';
+  firstReviewBy?: string;
+  firstReviewReason?: string;
+  firstReviewAt?: string | null;
+  pendingTodo?: string;
   revisions?: SignoffRevision[];
   createdAt: string;
   updatedAt: string;

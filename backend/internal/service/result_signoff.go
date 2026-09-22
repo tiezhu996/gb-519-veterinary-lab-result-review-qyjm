@@ -24,11 +24,12 @@ type ResultSignoffService interface {
 
 type resultSignoffService struct {
 	repository repository.ResultSignoffRepository
+	specimens  repository.SpecimenRepository
 	security   SecurityService
 }
 
-func NewResultSignoffService(repo repository.ResultSignoffRepository, security SecurityService) ResultSignoffService {
-	return &resultSignoffService{repository: repo, security: security}
+func NewResultSignoffService(repo repository.ResultSignoffRepository, specimens repository.SpecimenRepository, security SecurityService) ResultSignoffService {
+	return &resultSignoffService{repository: repo, specimens: specimens, security: security}
 }
 
 func (s *resultSignoffService) List(ctx context.Context, query dto.PageQuery) (repository.Page[model.ResultSignoff], error) {
@@ -109,18 +110,68 @@ func (s *resultSignoffService) Transition(ctx context.Context, id uint, input dt
 		if actor != current.PreparedBy {
 			return model.ResultSignoff{}, ErrPreparationOwner
 		}
+		// Submitting a draft for review clears any prior confirmation fields so
+		// every review round starts from a clean state.
 		current.ReviewedBy = ""
 		current.ReviewReason = ""
+		current.FirstReviewBy = ""
+		current.FirstReviewReason = ""
+		current.FirstReviewAt = nil
+		current.RelatedRiskLevel = ""
 	}
-	if target == "signed" || target == "rejected" {
+	if target == "second_review" || target == "signed" || target == "rejected" {
 		if !isSignoffReviewerRole(role) {
 			return model.ResultSignoff{}, ErrReviewRequired
 		}
 		if actor == current.PreparedBy {
 			return model.ResultSignoff{}, ErrSeparationOfDuty
 		}
-		current.ReviewedBy = actor
-		current.ReviewReason = strings.TrimSpace(input.Reason)
+		// Risk grading always comes from the linked specimen at decision time.
+		specimen, specimenErr := s.specimens.GetByCode(ctx, strings.ToUpper(strings.TrimSpace(current.RelatedCode)))
+		if specimenErr != nil {
+			return model.ResultSignoff{}, ErrRelatedSpecimenMissing
+		}
+		switch target {
+		case "second_review":
+			// Only high/critical-risk specimens may enter the second-level
+			// review queue, and the first confirmation is written once.
+			if !model.IsHighRisk(specimen.RiskLevel) {
+				return model.ResultSignoff{}, fmt.Errorf("%w: %s -> %s", ErrInvalidTransition, current.Status, target)
+			}
+			if current.FirstReviewBy != "" {
+				return model.ResultSignoff{}, ErrDuplicateReviewer
+			}
+			confirmedAt := time.Now().UTC()
+			current.FirstReviewBy = actor
+			current.FirstReviewReason = strings.TrimSpace(input.Reason)
+			current.FirstReviewAt = &confirmedAt
+			current.RelatedRiskLevel = specimen.RiskLevel
+		case "signed":
+			switch current.Status {
+			case "peer_review":
+				// Ordinary risk keeps the single different-person approval.
+				if model.IsHighRisk(specimen.RiskLevel) {
+					return model.ResultSignoff{}, fmt.Errorf("%w: %s -> %s", ErrInvalidTransition, current.Status, target)
+				}
+				current.ReviewedBy = actor
+				current.ReviewReason = strings.TrimSpace(input.Reason)
+			case "second_review":
+				// High risk requires a second, distinct reviewer to sign.
+				if actor == current.FirstReviewBy {
+					return model.ResultSignoff{}, ErrDuplicateReviewer
+				}
+				current.ReviewedBy = actor
+				current.ReviewReason = strings.TrimSpace(input.Reason)
+			}
+		case "rejected":
+			// Either reviewer level may reject; rejection follows the same
+			// separation-of-duty rules as the stage it is taken from.
+			if current.Status == "second_review" && actor == current.FirstReviewBy {
+				return model.ResultSignoff{}, ErrDuplicateReviewer
+			}
+			current.ReviewedBy = actor
+			current.ReviewReason = strings.TrimSpace(input.Reason)
+		}
 	}
 	before := current.Status
 	current.Status = target

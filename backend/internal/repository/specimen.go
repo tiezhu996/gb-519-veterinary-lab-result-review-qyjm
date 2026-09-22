@@ -12,6 +12,7 @@ import (
 type SpecimenRepository interface {
 	List(context.Context, dto.PageQuery) (Page[model.Specimen], error)
 	Get(context.Context, uint) (model.Specimen, error)
+	GetByCode(context.Context, string) (model.Specimen, error)
 	Create(context.Context, *model.Specimen) error
 	Update(context.Context, uint, uint, *model.Specimen) error
 	Delete(context.Context, uint) error
@@ -20,10 +21,11 @@ type SpecimenRepository interface {
 
 type specimenRepository struct {
 	store *Store[model.Specimen]
+	db    *gorm.DB
 }
 
 func NewSpecimenRepository(db *gorm.DB) SpecimenRepository {
-	return &specimenRepository{store: NewStore[model.Specimen](db)}
+	return &specimenRepository{store: NewStore[model.Specimen](db), db: db}
 }
 
 func (r *specimenRepository) List(ctx context.Context, q dto.PageQuery) (Page[model.Specimen], error) {
@@ -31,6 +33,11 @@ func (r *specimenRepository) List(ctx context.Context, q dto.PageQuery) (Page[mo
 }
 func (r *specimenRepository) Get(ctx context.Context, id uint) (model.Specimen, error) {
 	return r.store.Get(ctx, id)
+}
+func (r *specimenRepository) GetByCode(ctx context.Context, code string) (model.Specimen, error) {
+	var item model.Specimen
+	err := r.db.WithContext(ctx).Where("code = ?", code).First(&item).Error
+	return item, err
 }
 func (r *specimenRepository) Create(ctx context.Context, item *model.Specimen) error {
 	return r.store.Create(ctx, item)

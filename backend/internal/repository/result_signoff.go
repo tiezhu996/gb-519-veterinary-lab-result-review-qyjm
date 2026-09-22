@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"strings"
 
 	"github.com/blueship581/veterinary-lab-result-review/backend/internal/dto"
 	"github.com/blueship581/veterinary-lab-result-review/backend/internal/model"
@@ -48,6 +49,7 @@ func (r *resultSignoffRepository) List(ctx context.Context, q dto.PageQuery) (Pa
 	for index := range page.Items {
 		page.Items[index].Revisions = bySignoff[page.Items[index].ID]
 	}
+	enrichSignoffSpecimenRisk(ctx, r.db, page.Items)
 	return page, nil
 }
 func (r *resultSignoffRepository) Get(ctx context.Context, id uint) (model.ResultSignoff, error) {
@@ -55,7 +57,41 @@ func (r *resultSignoffRepository) Get(ctx context.Context, id uint) (model.Resul
 	err := r.db.WithContext(ctx).Preload("Revisions", func(db *gorm.DB) *gorm.DB {
 		return db.Order("version")
 	}).First(&item, id).Error
-	return item, err
+	if err != nil {
+		return item, err
+	}
+	enriched := []model.ResultSignoff{item}
+	enrichSignoffSpecimenRisk(ctx, r.db, enriched)
+	return enriched[0], nil
+}
+
+// enrichSignoffSpecimenRisk fills the non-persisted linked-specimen risk for
+// signoff records in a single batched lookup. Missing specimens leave the
+// value empty; signoff decisions still enforce the missing-specimen rule.
+func enrichSignoffSpecimenRisk(ctx context.Context, db *gorm.DB, items []model.ResultSignoff) {
+	codes := make([]string, 0, len(items))
+	seen := make(map[string]bool)
+	for _, item := range items {
+		code := strings.ToUpper(strings.TrimSpace(item.RelatedCode))
+		if code != "" && !seen[code] {
+			seen[code] = true
+			codes = append(codes, code)
+		}
+	}
+	if len(codes) == 0 {
+		return
+	}
+	var specimens []model.Specimen
+	if err := db.WithContext(ctx).Select("code", "risk_level").Where("code IN ?", codes).Find(&specimens).Error; err != nil {
+		return
+	}
+	riskByCode := make(map[string]string, len(specimens))
+	for _, specimen := range specimens {
+		riskByCode[specimen.Code] = specimen.RiskLevel
+	}
+	for index := range items {
+		items[index].SpecimenRiskLevel = riskByCode[strings.ToUpper(strings.TrimSpace(items[index].RelatedCode))]
+	}
 }
 func (r *resultSignoffRepository) CreateVersion(ctx context.Context, item *model.ResultSignoff, actor, requestID string) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
