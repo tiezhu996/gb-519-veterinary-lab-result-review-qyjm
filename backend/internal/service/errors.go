@@ -12,4 +12,6 @@ var (
 	ErrLocked            = errors.New("record is locked after peer review begins")
 	ErrPreparationOwner  = errors.New("only the original preparer may edit or submit this draft")
 	ErrSeparationOfDuty  = errors.New("preparer and reviewer must be different users")
+	ErrLinkedSpecimen    = errors.New("linked specimen is required before signoff review")
+	ErrDistinctReviewer  = errors.New("first and second reviewers must be different users")
 )

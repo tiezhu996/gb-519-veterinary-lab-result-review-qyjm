@@ -12,6 +12,7 @@ export function ResultPanel({ records }: { records: DomainRecord[] }) {
       <span>{item.name}</span>
       <small title={item.evidence}>{item.evidence || '尚未附加证据'}</small>
       <small>v{item.version} · {latest?.actor || item.reviewedBy || item.preparedBy || item.owner}</small>
+      {item.firstReviewedBy && <small className="first-review">首名确认：{item.firstReviewedBy}{item.firstReviewedAt ? ` · ${new Intl.DateTimeFormat('zh-CN', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(item.firstReviewedAt))}` : ''}</small>}
       <code title={latest?.requestId}>{latest?.requestId || '待形成签发请求 ID'}</code>
     </article>;
   })}</div>;

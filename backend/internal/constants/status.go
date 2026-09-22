@@ -18,13 +18,14 @@ var AllSpecimenState = []string{"received", "testing", "hold", "released", "disp
 type SignoffState string
 
 const (
-	SignoffStateDraft      SignoffState = "draft"
-	SignoffStatePeerReview SignoffState = "peer_review"
-	SignoffStateSigned     SignoffState = "signed"
-	SignoffStateRejected   SignoffState = "rejected"
+	SignoffStateDraft           SignoffState = "draft"
+	SignoffStatePeerReview      SignoffState = "peer_review"
+	SignoffStateSecondaryReview SignoffState = "secondary_review"
+	SignoffStateSigned          SignoffState = "signed"
+	SignoffStateRejected        SignoffState = "rejected"
 )
 
-var AllSignoffState = []string{"draft", "peer_review", "signed", "rejected"}
+var AllSignoffState = []string{"draft", "peer_review", "secondary_review", "signed", "rejected"}
 
 var AnimalCaseTransitions = map[string]map[string]bool{
 	"registered": {"sampling": true, "testing": true},
@@ -49,11 +50,16 @@ var AssayRunTransitions = map[string]map[string]bool{
 }
 
 var ResultSignoffTransitions = map[string]map[string]bool{
-	"draft":       {"peer_review": true},
-	"peer_review": {"signed": true, "rejected": true},
-	"signed":      {},
-	"rejected":    {},
+	"draft":            {"peer_review": true},
+	"peer_review":      {"signed": true, "secondary_review": true, "rejected": true},
+	"secondary_review": {"signed": true, "rejected": true},
+	"signed":           {},
+	"rejected":         {},
 }
+
+// HighSignoffSpecimenRisks marks linked specimen risk levels that require two
+// independent reviewers; low/medium specimens keep the single-reviewer path.
+var HighSignoffSpecimenRisks = map[string]bool{"high": true, "critical": true}
 
 func CanTransition(graph map[string]map[string]bool, from, to string) bool {
 	targets, exists := graph[from]

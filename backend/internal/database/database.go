@@ -173,6 +173,11 @@ func seedSpecimen(ctx context.Context, db *gorm.DB) error {
 			Description: "用于启动验证和主要流程演示的检验样本记录"}, Facility: "兽医检验样本结果复核区域3", Owner: "安全主管组",
 			Category: "复核", RiskLevel: "high", MetricValue: 37.5, MetricUnit: "score",
 			EffectiveAt: now.Add(6 * time.Hour), Evidence: "已完成基础证据核对", RelatedCode: "REL-519-03"},
+
+		{BaseModel: model.BaseModel{Code: "S-004", Name: "检验样本示例四", Status: "testing", Version: 1,
+			Description: "极高风险样本，用于演示结果签发双人复核"}, Facility: "兽医检验样本结果复核区域4", Owner: "生物安全组",
+			Category: "重大疫病", RiskLevel: "critical", MetricValue: 96.2, MetricUnit: "score",
+			EffectiveAt: now.Add(9 * time.Hour), Evidence: "高等级生物安全证据与阳性复核记录", RelatedCode: "REL-519-04"},
 	}
 	return db.WithContext(ctx).Create(&items).Error
 }
@@ -214,17 +219,26 @@ func seedResultSignoff(ctx context.Context, db *gorm.DB) error {
 		{BaseModel: model.BaseModel{Code: "RS-001", Name: "结果签发示例一", Status: "draft", Version: 1,
 			Description: "用于启动验证和主要流程演示的结果签发记录"}, Facility: "兽医检验样本结果复核区域1", Owner: "运行一组",
 			Category: "常规", RiskLevel: "low", MetricValue: 12.5, MetricUnit: "unit",
-			EffectiveAt: now.Add(0 * time.Hour), Evidence: "已完成基础证据核对", RelatedCode: "REL-519-01", PreparedBy: "operator"},
+			EffectiveAt: now.Add(0 * time.Hour), Evidence: "已完成基础证据核对", RelatedCode: "S-001", PreparedBy: "operator"},
 
 		{BaseModel: model.BaseModel{Code: "RS-002", Name: "结果签发示例二", Status: "peer_review", Version: 1,
 			Description: "用于启动验证和主要流程演示的结果签发记录"}, Facility: "兽医检验样本结果复核区域2", Owner: "质量复核组",
 			Category: "重点", RiskLevel: "medium", MetricValue: 25.0, MetricUnit: "%",
-			EffectiveAt: now.Add(3 * time.Hour), Evidence: "已完成基础证据核对", RelatedCode: "REL-519-02", PreparedBy: "operator"},
+			EffectiveAt: now.Add(3 * time.Hour), Evidence: "已完成基础证据核对", RelatedCode: "S-002", PreparedBy: "operator"},
 
 		{BaseModel: model.BaseModel{Code: "RS-003", Name: "结果签发示例三", Status: "signed", Version: 1,
 			Description: "用于启动验证和主要流程演示的结果签发记录"}, Facility: "兽医检验样本结果复核区域3", Owner: "安全主管组",
 			Category: "复核", RiskLevel: "high", MetricValue: 37.5, MetricUnit: "score",
-			EffectiveAt: now.Add(6 * time.Hour), Evidence: "已完成基础证据核对", RelatedCode: "REL-519-03", PreparedBy: "operator", ReviewedBy: "reviewer", ReviewReason: "演示数据双人复核通过"},
+			EffectiveAt: now.Add(6 * time.Hour), Evidence: "已完成基础证据核对", RelatedCode: "S-003", PreparedBy: "operator",
+			SpecimenRiskLevel: "high", FirstReviewedBy: "admin", FirstReviewReason: "首位复核确认高风险结果",
+			FirstReviewedAt: &now, ReviewedBy: "reviewer", ReviewReason: "演示数据双人复核通过"},
+
+		{BaseModel: model.BaseModel{Code: "RS-004", Name: "结果签发示例四", Status: "secondary_review", Version: 1,
+			Description: "极高风险样本，已由首位复核员确认，等待第二名不同复核员签发"}, Facility: "兽医检验样本结果复核区域4", Owner: "生物安全组",
+			Category: "重大疫病", RiskLevel: "critical", MetricValue: 96.2, MetricUnit: "score",
+			EffectiveAt: now.Add(9 * time.Hour), Evidence: "高等级生物安全证据与阳性复核记录", RelatedCode: "S-004", PreparedBy: "operator",
+			SpecimenRiskLevel: "critical", FirstReviewedBy: "reviewer", FirstReviewReason: "首位复核确认极高风险，等待二级复核",
+			FirstReviewedAt: &now},
 	}
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&items).Error; err != nil {

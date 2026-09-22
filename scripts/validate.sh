@@ -60,7 +60,7 @@ viewer_audit_status=$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:
 
 now=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
 suffix=$(date +%s)
-signoff_payload=$(printf '{"code":"SIGNOFF-SMOKE-%s","name":"Validated PCR result","description":"Dual-control Compose validation","facility":"Validation Veterinary Lab","owner":"Result Desk","category":"PCR","riskLevel":"high","metricValue":99.8,"metricUnit":"percent","effectiveAt":"%s","evidence":"PCR run sheet revision 1","relatedCode":"ASSAY-SMOKE"}' "$suffix" "$now")
+signoff_payload=$(printf '{"code":"SIGNOFF-SMOKE-%s","name":"Validated PCR result","description":"Dual-control Compose validation","facility":"Validation Veterinary Lab","owner":"Result Desk","category":"PCR","riskLevel":"low","metricValue":99.8,"metricUnit":"percent","effectiveAt":"%s","evidence":"PCR run sheet revision 1","relatedCode":"S-002"}' "$suffix" "$now")
 signoff=$(curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT:-19519}/api/signoff" \
   -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' -H 'X-Request-ID: gb519-signoff-create' \
   -d "$signoff_payload")
@@ -108,6 +108,60 @@ same_actor_status=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "http://127.
   -H "Authorization: Bearer $admin_token" -H 'Content-Type: application/json' -H 'X-Request-ID: gb519-self-sign-denied' \
   -d "{\"status\":\"signed\",\"expectedVersion\":$admin_review_version,\"reason\":\"same actor must be rejected\"}")
 [ "$same_actor_status" = "422" ]
+
+# High-risk linked specimen (S-003) requires two distinct reviewers.
+dual_payload=$(printf '{"code":"SIGNOFF-DUAL-%s","name":"High risk dual review","description":"Two-reviewer validation","facility":"Validation Veterinary Lab","owner":"Result Desk","category":"PCR","riskLevel":"high","metricValue":97,"metricUnit":"percent","effectiveAt":"%s","evidence":"high risk run sheet","relatedCode":"S-003"}' "$suffix" "$now")
+dual=$(curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT:-19519}/api/signoff" \
+  -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' -H 'X-Request-ID: gb519-dual-create' \
+  -d "$dual_payload")
+dual_id=$(printf '%s' "$dual" | jq -er '.data.id')
+dual_v=$(printf '%s' "$dual" | jq -er '.data.version')
+dual_pr=$(curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT:-19519}/api/signoff/$dual_id/transition" \
+  -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' -H 'X-Request-ID: gb519-dual-submit' \
+  -d "{\"status\":\"peer_review\",\"expectedVersion\":$dual_v,\"reason\":\"high risk evidence ready\"}")
+dual_pr_v=$(printf '%s' "$dual_pr" | jq -er '.data.version')
+
+# First reviewer requests signed; high risk downgrades to secondary_review and records conclusion/time.
+dual_first=$(curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT:-19519}/api/signoff/$dual_id/transition" \
+  -H "Authorization: Bearer $reviewer_token" -H 'Content-Type: application/json' -H 'X-Request-ID: gb519-dual-first' \
+  -d "{\"status\":\"signed\",\"expectedVersion\":$dual_pr_v,\"reason\":\"first reviewer confirms high risk\"}")
+dual_first_v=$(printf '%s' "$dual_first" | jq -er '.data.version')
+printf '%s' "$dual_first" | jq -e '.data.status == "secondary_review" and .data.firstReviewedBy == "reviewer" and .data.firstReviewedAt != null and .data.specimenRiskLevel == "high" and .data.linkedSpecimenRiskLevel == "high" and (.data.reviewedBy == "" or .data.reviewedBy == null)' >/dev/null
+
+# Same user repeating confirmation is rejected; state and first conclusion stay intact.
+dual_same_status=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:${BACKEND_PORT:-19519}/api/signoff/$dual_id/transition" \
+  -H "Authorization: Bearer $reviewer_token" -H 'Content-Type: application/json' -H 'X-Request-ID: gb519-dual-same-denied' \
+  -d "{\"status\":\"signed\",\"expectedVersion\":$dual_first_v,\"reason\":\"same reviewer must be denied\"}")
+[ "$dual_same_status" = "422" ]
+# Stale expected version is rejected with 409.
+dual_stale_status=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:${BACKEND_PORT:-19519}/api/signoff/$dual_id/transition" \
+  -H "Authorization: Bearer $admin_token" -H 'Content-Type: application/json' -H 'X-Request-ID: gb519-dual-stale' \
+  -d "{\"status\":\"signed\",\"expectedVersion\":$dual_pr_v,\"reason\":\"stale version must be denied\"}")
+[ "$dual_stale_status" = "409" ]
+# Failed attempts must not advance state or overwrite the first confirmation.
+curl -fsS "http://127.0.0.1:${BACKEND_PORT:-19519}/api/signoff/$dual_id" -H "Authorization: Bearer $admin_token" \
+  | jq -e '.data.status == "secondary_review" and .data.firstReviewedBy == "reviewer" and (.data.reviewedBy == "" or .data.reviewedBy == null) and (.data.revisions | length) == 3' >/dev/null
+# A second, different reviewer finalizes issuance.
+dual_signed=$(curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT:-19519}/api/signoff/$dual_id/transition" \
+  -H "Authorization: Bearer $admin_token" -H 'Content-Type: application/json' -H 'X-Request-ID: gb519-dual-signed' \
+  -d "{\"status\":\"signed\",\"expectedVersion\":$dual_first_v,\"reason\":\"second distinct reviewer signs\"}")
+printf '%s' "$dual_signed" | jq -e '.data.status == "signed" and .data.reviewedBy == "admin" and .data.firstReviewedBy == "reviewer" and (.data.revisions | length) == 4' >/dev/null
+
+# A missing linked specimen blocks first-level review without advancing the record.
+missing_payload=$(printf '{"code":"SIGNOFF-MISSING-%s","name":"Missing linked specimen","description":"Link validation","facility":"Validation Veterinary Lab","owner":"Result Desk","category":"PCR","riskLevel":"high","metricValue":1,"metricUnit":"percent","effectiveAt":"%s","evidence":"missing link evidence","relatedCode":"S-DOES-NOT-EXIST"}' "$suffix" "$now")
+missing=$(curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT:-19519}/api/signoff" \
+  -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' -d "$missing_payload")
+missing_id=$(printf '%s' "$missing" | jq -er '.data.id')
+missing_v=$(printf '%s' "$missing" | jq -er '.data.version')
+curl -fsS -X POST "http://127.0.0.1:${BACKEND_PORT:-19519}/api/signoff/$missing_id/transition" \
+  -H "Authorization: Bearer $operator_token" -H 'Content-Type: application/json' \
+  -d "{\"status\":\"peer_review\",\"expectedVersion\":$missing_v,\"reason\":\"submit missing link case\"}" >/dev/null
+missing_status=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:${BACKEND_PORT:-19519}/api/signoff/$missing_id/transition" \
+  -H "Authorization: Bearer $reviewer_token" -H 'Content-Type: application/json' \
+  -d "{\"status\":\"signed\",\"expectedVersion\":$((missing_v+1)),\"reason\":\"missing link must be denied\"}")
+[ "$missing_status" = "422" ]
+curl -fsS "http://127.0.0.1:${BACKEND_PORT:-19519}/api/signoff/$missing_id" -H "Authorization: Bearer $reviewer_token" \
+  | jq -e '.data.status == "peer_review" and .data.linkedSpecimenMissing == true and (.data.firstReviewedBy == "" or .data.firstReviewedBy == null)' >/dev/null
 
 curl -fsS "http://127.0.0.1:${BACKEND_PORT:-19519}/api/audits/ResultSignoff/$signoff_id?limit=10" \
   -H "Authorization: Bearer $reviewer_token" \

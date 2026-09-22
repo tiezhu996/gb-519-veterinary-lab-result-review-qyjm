@@ -35,7 +35,7 @@ func New(cfg config.Config, db *gorm.DB, redisClient *redis.Client, logger *slog
 	animalCaseService := service.NewAnimalCaseService(animalCaseRepository, securityService)
 	specimenService := service.NewSpecimenService(specimenRepository, securityService)
 	assayRunService := service.NewAssayRunService(assayRunRepository, securityService)
-	resultSignoffService := service.NewResultSignoffService(resultSignoffRepository, securityService)
+	resultSignoffService := service.NewResultSignoffService(resultSignoffRepository, specimenRepository, securityService)
 	animalCaseHandler := handler.NewAnimalCaseHandler(animalCaseService)
 	specimenHandler := handler.NewSpecimenHandler(specimenService)
 	assayRunHandler := handler.NewAssayRunHandler(assayRunService)
